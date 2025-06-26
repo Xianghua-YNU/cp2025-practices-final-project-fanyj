@@ -1,74 +1,160 @@
-"""三体问题可视化：生成论文所需图表"""
 import numpy as np
-from mayavi import mlab
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+from mpl_toolkits.mplot3d import Axes3D
+import os
 
-def plot_3d_orbit(time_days, earth_pos, moon_pos_std, moon_pos_pert):
+def plot_orbits(trajectories, title="三体系统轨道", save_path=None):
     """绘制3D轨道图"""
-    mlab.figure(bgcolor=(0, 0, 0), size=(1000, 800))
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
     
-    # 太阳
-    mlab.points3d(0, 0, 0, scale_factor=7e8, color=(1, 0.8, 0), resolution=50)
+    # 提取轨迹数据
+    sun_traj = np.array([traj[0] for traj in trajectories]) / 1.496e11  # 转换为AU
+    earth_traj = np.array([traj[1] for traj in trajectories]) / 1.496e11
+    moon_traj = np.array([traj[2] for traj in trajectories]) / 1.496e11
     
-    # 地球轨道
-    mlab.plot3d(earth_pos[:, 0], earth_pos[:, 1], earth_pos[:, 2],
-                color=(0, 0.5, 1), tube_radius=3e8, opacity=0.6)
+    # 绘制轨道
+    ax.plot(sun_traj[:, 0], sun_traj[:, 1], sun_traj[:, 2], 'yo-', label='太阳')
+    ax.plot(earth_traj[:, 0], earth_traj[:, 1], earth_traj[:, 2], 'b-', label='地球')
+    ax.plot(moon_traj[:, 0], moon_traj[:, 1], moon_traj[:, 2], 'g-', label='月球')
     
-    # 标准月球轨道
-    mlab.plot3d(moon_pos_std[:, 0], moon_pos_std[:, 1], moon_pos_std[:, 2],
-                color=(1, 1, 1), tube_radius=1.5e8)
+    # 设置坐标轴
+    ax.set_xlabel('X (AU)')
+    ax.set_ylabel('Y (AU)')
+    ax.set_zlabel('Z (AU)')
+    ax.set_title(title)
+    ax.legend()
     
-    # 微扰月球轨道
-    mlab.plot3d(moon_pos_pert[:, 0], moon_pos_pert[:, 1], moon_pos_pert[:, 2],
-                color=(1, 0, 0), tube_radius=1.5e8)
-    
-    # 设置视角和标签
-    mlab.view(azimuth=45, elevation=60, distance=3e11)
-    mlab.axes(xlabel='X (m)', ylabel='Y (m)', zlabel='Z (m)',
-              ranges=[-2e11, 2e11]*3, line_width=2, color=(1, 1, 1))
-    mlab.title('Sun-Earth-Moon Three-Body Orbits', color=(1, 1, 1), size=0.1)
-    
-    mlab.savefig("1_论文/assets/3d_orbit.png", figure=mlab.gcf())
-    mlab.close()
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+        plt.close()
+    else:
+        plt.show()
 
-def plot_deviation(time_days, pos_std, pos_pert):
-    """绘制轨道偏差双对数图"""
-    # 计算距离偏差
-    deviation = np.linalg.norm(pos_std - pos_pert, axis=1)
-    # 初始偏差
-    initial_dev = deviation[0]
-    # 对数尺度
-    normalized_dev = deviation / initial_dev
+def plot_energy_conservation(energies, initial_energy, title="能量守恒", save_path=None):
+    """绘制能量守恒图"""
+    time = np.arange(len(energies)) * 12 * 3600 / 86400  # 转换为天
+    energy_ratio = np.array(energies) / initial_energy
     
     plt.figure(figsize=(10, 6))
-    plt.loglog(time_days, normalized_dev, 'r-', linewidth=2)
-    plt.xlabel('Time (days)', fontsize=12)
-    plt.ylabel('Log(Normalized Deviation)', fontsize=12)
-    plt.title('Orbital Deviation Growth', fontsize=14)
-    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-    plt.tight_layout()
-    plt.savefig("1_论文/assets/deviation.png", dpi=300)
-    plt.close()
+    plt.plot(time, energy_ratio)
+    plt.title(title)
+    plt.xlabel('时间 (天)')
+    plt.ylabel('E/E0')
+    plt.grid(True)
+    plt.ylim(0.999, 1.001)  # 放大显示能量变化
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+        plt.close()
+    else:
+        plt.show()
 
-def plot_mass_ratio_effect():
-    """绘制质量比与李雅普诺夫指数关系图"""
-    q = np.linspace(0.001, 0.1, 100)  # 质量比 q = m3/m2
-    # 李雅普诺夫指数模型（基于论文假设）
-    mle = 0.001 * (1 - np.exp(-q * 50)) / (1 + np.exp(-(q - 0.01) * 200))
-    chaos_threshold = 0.001
-    chaos_region = (mle > chaos_threshold)
+def plot_orbit_elements(orbit_data, title="轨道要素演化", save_path=None):
+    """绘制轨道要素演化图"""
+    time = np.array([data['time'] for data in orbit_data])
     
-    plt.figure(figsize=(10, 6))
-    plt.plot(q, mle, 'k-', linewidth=2)
-    plt.fill_between(q, mle, 0, where=chaos_region, color='gray', alpha=0.3)
-    plt.scatter(1/81.3, mle[np.argmin(np.abs(q - 1/81.3))], 
-                color='red', s=100, label='Solar System (q=1/81.3)')
+    # 地球半长轴 (AU)
+    earth_a = np.array([data['earth']['semi_major_axis'] / 1.496e11 for data in orbit_data])
+    # 地球偏心率
+    earth_e = np.array([data['earth']['eccentricity'] for data in orbit_data])
     
-    plt.xlabel('Mass Ratio (q = m3/m2)', fontsize=12)
-    plt.ylabel('Lyapunov Exponent (1/day)', fontsize=12)
-    plt.title('Lyapunov Exponent vs Mass Ratio', fontsize=14)
-    plt.grid(True, linestyle='--', linewidth=0.5)
-    plt.legend(fontsize=10)
-    plt.tight_layout()
-    plt.savefig("1_论文/assets/mass_ratio.png", dpi=300)
+    fig, axes = plt.subplots(2, 1, figsize=(10, 10))
+    fig.suptitle(title, fontsize=14)
+    
+    axes[0].plot(time, earth_a)
+    axes[0].set_title('地球半长轴 (AU)')
+    axes[0].set_xlabel('时间 (天)')
+    axes[0].grid(True)
+    
+    axes[1].plot(time, earth_e)
+    axes[1].set_title('地球偏心率')
+    axes[1].set_xlabel('时间 (天)')
+    axes[1].grid(True)
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300)
+        plt.close()
+    else:
+        plt.show()
+
+def generate_animation(trajectories, title="三体系统轨道演化", filename="animation.gif", show_progress=True):
+    """生成三体运动动画"""
+    import time
+    start_time = time.time()
+    
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # 提取轨迹数据
+    skip = max(1, len(trajectories) // 200)  # 最多200帧
+    sun_traj = np.array([traj[0] for traj in trajectories[::skip]]) / 1.496e11
+    earth_traj = np.array([traj[1] for traj in trajectories[::skip]]) / 1.496e11
+    moon_traj = np.array([traj[2] for traj in trajectories[::skip]]) / 1.496e11
+    time_steps = len(sun_traj)
+    
+    # 绘制初始帧
+    sun, = ax.plot([sun_traj[0, 0]], [sun_traj[0, 1]], [sun_traj[0, 2]], 'yo', markersize=10, label='太阳')
+    earth, = ax.plot([earth_traj[0, 0]], [earth_traj[0, 1]], [earth_traj[0, 2]], 'bo', markersize=6, label='地球')
+    moon, = ax.plot([moon_traj[0, 0]], [moon_traj[0, 1]], [moon_traj[0, 2]], 'go', markersize=4, label='月球')
+    earth_orbit, = ax.plot(earth_traj[:, 0], earth_traj[:, 1], earth_traj[:, 2], 'b-', alpha=0.3)
+    moon_orbit, = ax.plot(moon_traj[:, 0], moon_traj[:, 1], moon_traj[:, 2], 'g-', alpha=0.3)
+    
+    # 设置坐标轴
+    ax.set_xlabel('X (AU)')
+    ax.set_ylabel('Y (AU)')
+    ax.set_zlabel('Z (AU)')
+    ax.set_title(title)
+    ax.legend()
+    
+    # 自动调整视图范围
+    max_range = np.max([
+        np.max(earth_traj[:, 0]) - np.min(earth_traj[:, 0]),
+        np.max(earth_traj[:, 1]) - np.min(earth_traj[:, 1]),
+        np.max(earth_traj[:, 2]) - np.min(earth_traj[:, 2])
+    ]) * 1.1
+    mid_x = 0.5 * (np.max(earth_traj[:, 0]) + np.min(earth_traj[:, 0]))
+    mid_y = 0.5 * (np.max(earth_traj[:, 1]) + np.min(earth_traj[:, 1]))
+    mid_z = 0.5 * (np.max(earth_traj[:, 2]) + np.min(earth_traj[:, 2]))
+    ax.set_xlim(mid_x - max_range/2, mid_x + max_range/2)
+    ax.set_ylim(mid_y - max_range/2, mid_y + max_range/2)
+    ax.set_zlim(mid_z - max_range/2, mid_z + max_range/2)
+    
+    # 动画更新函数
+    def update(frame):
+        if show_progress and frame % 10 == 0:
+            print(f"生成动画帧 {frame}/{time_steps}")
+        
+        sun.set_data([sun_traj[frame, 0]], [sun_traj[frame, 1]])
+        sun.set_3d_properties([sun_traj[frame, 2]])
+        earth.set_data([earth_traj[frame, 0]], [earth_traj[frame, 1]])
+        earth.set_3d_properties([earth_traj[frame, 2]])
+        moon.set_data([moon_traj[frame, 0]], [moon_traj[frame, 1]])
+        moon.set_3d_properties([moon_traj[frame, 2]])
+        earth_orbit.set_data(earth_traj[:frame+1, 0], earth_traj[:frame+1, 1])
+        earth_orbit.set_3d_properties(earth_traj[:frame+1, 2])
+        moon_orbit.set_data(moon_traj[:frame+1, 0], moon_traj[:frame+1, 1])
+        moon_orbit.set_3d_properties(moon_traj[:frame+1, 2])
+        ax.set_title(f"{title} (时间: {frame*skip*12/24:.1f}天)")
+        return sun, earth, moon, earth_orbit, moon_orbit
+    
+    # 生成动画
+    anim = FuncAnimation(fig, update, frames=time_steps, interval=50, blit=True)
+    
+    # 保存动画
+    if not filename.lower().endswith('.gif'):
+        filename = os.path.splitext(filename)[0] + '.gif'
+    
+    try:
+        anim.save(filename, writer='pillow', fps=20, dpi=100)
+        if show_progress:
+            print(f"动画已保存至 {filename}")
+    except Exception as e:
+        print(f"保存动画失败: {e}")
+        print("请确保已安装Pillow库 (pip install pillow)")
+    
     plt.close()
+    return filename
