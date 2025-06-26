@@ -1,25 +1,18 @@
-"""
-工具函数模块：包含一些通用的辅助函数。
-"""
+import os
+import time
 
-def load_parameters(filepath):
-    """
-    示例：从文件加载参数。
-    """
-    print(f"Loading parameters from {filepath}...")
-    # 实际实现可能涉及读取JSON, YAML或其他格式的文件
-    parameters = {
-        "param1": 10,
-        "param2": "value"
-    }
-    return parameters
+def create_results_directory():
+    """创建结果保存目录"""
+    if not os.path.exists('results'):
+        os.makedirs('results')
+    os.chdir('results')
 
-def save_results(filepath, results):
-    """
-    示例：将结果保存到文件。
-    """
-    print(f"Saving results to {filepath}...")
-    # 实际实现可能涉及写入CSV, JSON, HDF5等格式的文件
-    pass
-
-# 可以添加更多工具函数
+def timer_decorator(func):
+    """计时装饰器"""
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        print(f"{func.__name__} 运行时间: {end_time - start_time:.2f} 秒")
+        return result
+    return wrapper
