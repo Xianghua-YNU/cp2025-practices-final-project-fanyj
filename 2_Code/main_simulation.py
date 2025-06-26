@@ -1,112 +1,153 @@
-"""太阳系三体问题模拟主程序：设置参数、控制模拟流程"""
+from numerical_methods import VerletIntegrator, setup_solar_system_initial_conditions, calculate_gravitational_acceleration
+from data_analysis import calculate_total_energy, calculate_orbit_elements, calculate_lyapunov_exponent
+from visualization import plot_orbits, plot_energy_conservation, plot_orbit_elements, generate_animation
+from utils import create_results_directory, timer_decorator
 import numpy as np
-from numerical_methods import VerletIntegrator  # 导入核心算法
-from data_analysis import calculate_orbital_elements, lyapunov_exponent
-from visualization import plot_3d_orbit, plot_deviation, plot_mass_ratio_effect
-import time
 
-# ---------------------
-# 1. 物理参数设置（参数化设计，便于修改）
-# ---------------------
-G = 6.67430e-11  # 万有引力常数 (N·m²/kg²)
-# 天体质量 (kg)
-m_sun = 1.989e30
-m_earth = 5.972e24
-m_moon = 7.342e22
-# 初始位置 (m) - 日心坐标系
-r_sun = np.array([0.0, 0.0, 0.0])
-r_earth = np.array([1.496e11, 0.0, 0.0])  # 1 AU
-r_moon = r_earth + np.array([3.844e8, 0.0, 0.0])  # 地月距离
-# 初始速度 (m/s)
-v_earth = np.array([0.0, 29783.0, 0.0])  # 地球公转速度
-v_moon = v_earth + np.array([0.0, 1022.0, 0.0])  # 月球绕地速度
-# 模拟参数
-dt = 43200.0  # 时间步长 12小时 (s)
-total_days = 10000  # 模拟总天数
-output_interval = 100  # 输出数据间隔（天）
+@timer_decorator
+def run_simulation(perturbation=0.0, days=1000, time_step=12*3600):
+    """运行三体系统模拟"""
+    print(f"运行模拟 (扰动: {perturbation}%, 时长: {days}天)...")
+    
+    # 设置初始条件
+    masses, positions, velocities = setup_solar_system_initial_conditions(perturbation)
+    
+    # 初始化积分器
+    integrator = VerletIntegrator(
+        masses=masses,
+        initial_positions=positions,
+        initial_velocities=velocities,
+        time_step=time_step,
+        force_function=calculate_gravitational_acceleration
+    )
+    
+    # 运行模拟
+    steps = int(days * 86400 / time_step)
+    energies = [calculate_total_energy(positions, velocities, masses)]
+    orbit_elements = []
+    
+    for i in range(steps):
+        if i % 1000 == 0:
+            print(f"模拟进度: {i/steps*100:.1f}%")
+            
+            # 计算当前轨道要素
+            earth_pos = positions[1] - positions[0]  # 相对太阳的位置
+            earth_vel = velocities[1]
+            earth_orbit = calculate_orbit_elements(earth_pos, earth_vel, masses[0])
+            
+            moon_pos = positions[2] - positions[0]
+            moon_vel = velocities[2]
+            moon_orbit = calculate_orbit_elements(moon_pos, moon_vel, masses[0])
+            
+            orbit_elements.append({
+                'time': i * time_step / 86400,  # 转换为天
+                'earth': earth_orbit,
+                'moon': moon_orbit
+            })
+        
+        # 执行一步积分
+        integrator.step()
+        
+        # 计算并记录能量
+        current_energy = calculate_total_energy(
+            integrator.positions, 
+            integrator.velocities, 
+            integrator.masses
+        )
+        energies.append(current_energy)
+    
+    print("模拟完成!")
+    
+    return {
+        'trajectories': integrator.trajectories,
+        'energies': energies,
+        'orbit_elements': orbit_elements,
+        'masses': masses
+    }
 
-# ---------------------
-# 2. 初始化积分器与天体系统
-# ---------------------
+def compare_simulations(standard_results, perturbed_results, time_step):
+    """比较标准模拟和扰动模拟的结果"""
+    print("分析李雅普诺夫指数...")
+    
+    # 计算李雅普诺夫指数
+    lyapunov, times, log_distances = calculate_lyapunov_exponent(
+        standard_results['trajectories'],
+        perturbed_results['trajectories'],
+        time_step
+    )
+    
+    print(f"李雅普诺夫指数: {lyapunov:.8f} /天")
+    return lyapunov, times, log_distances
+
 def main():
-    start_time = time.time()
-    print("=== 太阳系三体问题模拟开始 ===")
+    """主函数：运行模拟并生成结果"""
+    # 创建结果目录
+    create_results_directory()
     
-    # 初始化Verlet积分器
-    integrator = VerletIntegrator(G)
-    # 添加天体：(质量, 位置, 速度)
-    integrator.add_body(m_sun, r_sun, np.zeros(3))
-    integrator.add_body(m_earth, r_earth, v_earth)
-    integrator.add_body(m_moon, r_moon, v_moon)
+    # 设置模拟参数
+    time_step = 12 * 3600  # 12小时
+    simulation_days = 1000  # 模拟1000天
     
-    # ---------------------
-    # 3. 执行模拟 - 标准组
-    # ---------------------
-    print("运行标准组模拟...")
-    time_standard, positions_standard, velocities_standard = integrator.simulate(
-        total_days=total_days, dt=dt, output_interval=output_interval
+    # 运行标准模拟（无扰动）
+    standard_results = run_simulation(
+        perturbation=0.0,
+        days=simulation_days,
+        time_step=time_step
     )
-    # 计算轨道要素
-    a_earth_std, e_earth_std, a_moon_std, e_moon_std = calculate_orbital_elements(
-        time_standard, positions_standard
-    )
-    # 保存标准组数据
-    np.savez("3_Data/raw_data/standard_group.npz", 
-             time=time_standard, 
-             earth_pos=positions_standard[:, 1], 
-             moon_pos=positions_standard[:, 2])
     
-    # ---------------------
-    # 4. 执行模拟 - 微扰组（月球速度+0.05%）
-    # ---------------------
-    print("运行微扰组模拟...")
-    integrator.reset()  # 重置积分器
-    integrator.add_body(m_sun, r_sun, np.zeros(3))
-    integrator.add_body(m_earth, r_earth, v_earth)
-    integrator.add_body(m_moon, r_moon, v_moon * 1.0005)  # 速度微扰
-    time_perturb, positions_perturb, velocities_perturb = integrator.simulate(
-        total_days=total_days, dt=dt, output_interval=output_interval
+    # 运行扰动模拟（0.05%速度扰动）
+    perturbed_results = run_simulation(
+        perturbation=0.05,
+        days=simulation_days,
+        time_step=time_step
     )
-    # 计算轨道要素
-    a_earth_pert, e_earth_pert, a_moon_pert, e_moon_pert = calculate_orbital_elements(
-        time_perturb, positions_perturb
-    )
-    # 保存微扰组数据
-    np.savez("3_Data/raw_data/perturbed_group.npz", 
-             time=time_perturb, 
-             earth_pos=positions_perturb[:, 1], 
-             moon_pos=positions_perturb[:, 2])
     
-    # ---------------------
-    # 5. 数据分析
-    # ---------------------
-    print("计算李雅普诺夫指数...")
-    lyapunov = lyapunov_exponent(
-        positions_standard[:, 2], positions_perturb[:, 2], 
-        time_standard, dt=dt
+    # 比较两个模拟结果
+    lyapunov, times, log_distances = compare_simulations(
+        standard_results, 
+        perturbed_results,
+        time_step
     )
-    print(f"最大李雅普诺夫指数: {lyapunov:.6f} 1/天")
     
-    # ---------------------
-    # 6. 可视化
-    # ---------------------
-    print("生成可视化图表...")
-    # 3D轨道图
-    plot_3d_orbit(
-        time_standard, 
-        positions_standard[:, 1], positions_standard[:, 2],
-        positions_perturb[:, 2]
-    )
-    # 轨道偏差图
-    plot_deviation(
-        time_standard, 
-        positions_standard[:, 2], positions_perturb[:, 2]
-    )
-    # 质量比效应图（需提前计算不同质量比数据）
-    plot_mass_ratio_effect()
+    # 生成可视化结果
+    print("生成可视化结果...")
     
-    end_time = time.time()
-    print(f"模拟完成，总耗时: {end_time - start_time:.2f} 秒")
+    # 绘制轨道图
+    plot_orbits(
+        standard_results['trajectories'], 
+        title="标准模拟轨道", 
+        save_path="standard_orbits.png"
+    )
+    
+    plot_orbits(
+        perturbed_results['trajectories'], 
+        title="扰动模拟轨道 (0.05%)", 
+        save_path="perturbed_orbits.png"
+    )
+    
+    # 绘制能量守恒图
+    plot_energy_conservation(
+        standard_results['energies'],
+        standard_results['energies'][0],
+        title="标准模拟能量守恒",
+        save_path="standard_energy.png"
+    )
+    
+    # 绘制轨道要素演化图
+    plot_orbit_elements(
+        standard_results['orbit_elements'],
+        title="标准模拟轨道要素演化",
+        save_path="standard_orbit_elements.png"
+    )
+    
+    # 生成动画
+    generate_animation(
+        standard_results['trajectories'],
+        title="标准模拟轨道演化",
+        filename="standard_animation.gif"
+    )
+    
+    print("所有结果已保存至results目录")
 
 if __name__ == "__main__":
     main()
